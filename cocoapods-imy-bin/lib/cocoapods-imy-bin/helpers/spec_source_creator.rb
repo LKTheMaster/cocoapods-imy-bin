@@ -133,7 +133,7 @@ module CBin
         # license | resource_bundles | vendored_libraries
 
         # Project Linkin
-        @spec.vendored_frameworks = "#{code_spec.root.name}.framework"
+        @spec.vendored_frameworks = "#{code_spec.root.module_name}.framework"
 
         # Resources
         extnames = []

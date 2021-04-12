@@ -111,12 +111,9 @@ module Pod
                         end
 
                         target_dependencies.each do |target_dependency|
-                          dp_hash_equal = target_dependency.is_a?(Hash) &&
-                            target_dependency.keys.first &&
-                            target_dependency.keys.first == local_dependency.keys.first
-                          dp_str_equal = target_dependency.is_a?(String) &&
-                            target_dependency == local_dependency.keys.first
-                          next unless dp_hash_equal || dp_str_equal
+                          next unless target_dependency.is_a?(Hash) &&
+                                      target_dependency.keys.first &&
+                                      target_dependency.keys.first == local_dependency.keys.first
 
                           target_dependencies.delete target_dependency
                           break

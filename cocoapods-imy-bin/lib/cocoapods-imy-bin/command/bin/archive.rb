@@ -7,6 +7,7 @@ require 'cocoapods-imy-bin/helpers/build_helper'
 require 'cocoapods-imy-bin/helpers/spec_source_creator'
 require 'cocoapods-imy-bin/config/config_builder'
 require 'cocoapods-imy-bin/command/bin/lib/lint'
+require 'xcodeproj'
 
 module Pod
   class Command
@@ -62,22 +63,24 @@ module Pod
         end
 
         def run
-          #清除之前的缓存
-          zip_dir = CBin::Config::Builder.instance.zip_dir
-          FileUtils.rm_rf(zip_dir) if File.exist?(zip_dir)
+          # 清除之前的缓存
+          CBin::Config::Builder.instance.clean
 
           @spec = Specification.from_file(spec_file)
           generate_project
+          
+          # swift_pods_buildsetting
 
-          source_specs = Array.new
-          source_specs.concat(build_root_spec)
-          source_specs.concat(build_dependencies) if @all_make
+          build_root_spec
 
-          source_specs
+          sources_sepc = Array.new
+          sources_sepc << @spec
+          sources_sepc.concat(build_dependencies) if @all_make
+
+          sources_sepc
         end
 
         def build_root_spec
-          source_specs = []
           builder = CBin::Build::Helper.new(@spec,
                                             @platform,
                                             @framework_output,
@@ -87,15 +90,12 @@ module Pod
                                             @config)
           builder.build
           builder.clean_workspace if @clean && !@all_make
-          source_specs << @spec unless CBin::Config::Builder.instance.white_pod_list.include?(@spec.name)
-
-          source_specs
         end
 
         def build_dependencies
           @build_finshed = true
           #如果没要求，就清空依赖库数据
-          source_specs = []
+          sources_sepc = []
           @@missing_binary_specs.uniq.each do |spec|
             next if spec.name.include?('/')
             next if spec.name == @spec.name
@@ -115,11 +115,11 @@ module Pod
             next if spec.attributes_hash['vendored_frameworks'] && @spec.name != spec.name #过滤带有vendored_frameworks的
             next if spec.attributes_hash['ios.vendored_frameworks'] && @spec.name != spec.name #过滤带有vendored_frameworks的
             #获取没有制作二进制版本的spec集合
-            source_specs << spec
+            sources_sepc << spec
           end
 
           fail_build_specs = []
-          source_specs.uniq.each do |spec|
+          sources_sepc.uniq.each do |spec|
             begin
               builder = CBin::Build::Helper.new(spec,
                                                 @platform,
@@ -140,7 +140,7 @@ module Pod
               UI.warn "【#{spec.name} | #{spec.version}】组件二进制版本编译失败 ."
             end
           end
-          source_specs - fail_build_specs
+          sources_sepc - fail_build_specs
         end
 
         # 解析器传过来的
@@ -157,14 +157,18 @@ module Pod
                   "--sources=#{sources_option(@code_dependencies, @sources)}",
                   "--gen-directory=#{CBin::Config::Builder.instance.gen_dir}",
                   '--clean',
+                  "--verbose",
                   *@additional_args
                 ]
 
-                podfile= File.join(Pathname.pwd, "Podfile")
-                if File.exist?(podfile)
+                if File.exist?(Pod::Config.instance.podfile_path)
                   argvs += ['--use-podfile']
                 end
-                
+
+                unless CBin::Build::Utils.uses_frameworks?
+                  argvs += ['--use-libraries']
+                end
+
                 argvs << spec_file if spec_file
 
                 gen = Pod::Command::Gen.new(CLAide::ARGV.new(argvs))
@@ -174,6 +178,34 @@ module Pod
           end
         end
 
+        def swift_pods_buildsetting
+          # swift_project_link_header
+          worksppace_path = File.expand_path("#{CBin::Config::Builder.instance.gen_dir}/#{@spec.name}")
+          path = File.join(worksppace_path, "Pods.xcodeproj")
+          path = File.join(worksppace_path, "Pods/Pods.xcodeproj") unless File.exist?(path)
+          raise Informative,  "#{path} File no exist, please check" unless File.exist?(path)
+          project = Xcodeproj::Project.open(path)
+          project.build_configurations.each do |x|
+            x.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = true #设置生成swift inter
+            x.build_settings['MACH_O_TYPE'] = 'staticlib'
+          end
+          project.save
+        end
+
+        # def swift_project_link_header
+        #   worksppace_path = Pod::Config.instance.installation_root
+        #   Dir.chdir(worksppace_path) do
+        #     shell_script = <<-'SH'.strip_heredoc
+        #          ditto "${DERIVED_SOURCES_DIR}/${PRODUCT_MODULE_NAME}-Swift.h" "${CBin::Config::Builder.instance.gen_dir}"
+        #     SH
+        #     shell_script
+        #
+        #     # project = Xcodeproj::Project.open(Dir.glob('*.xcodeproj').first)
+        #     # project.build_configurations.each do |x|
+        #     #   x.build_settings['DERIVED_SOURCES_DIR']
+        #     # end
+        #   end
+        # end
 
         def spec_file
           @spec_file ||= begin
